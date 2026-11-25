@@ -1,0 +1,108 @@
+# Ejemplo de configuracion que pondria cada microservicio consumidor en su application.yml
+
+app:
+  outbound:
+    resilience:
+      enabled: true
+      default-policy: defaultPolicy
+
+      # Nombre logico -> instancias de resilience4j.* (cualquier patron es opcional)
+      policies:
+        - name: defaultPolicy
+          circuit-breaker: cb-default
+          retry: retry-default
+          rate-limiter: rl-default
+          bulkhead: bh-default
+
+        - name: ordersReadPolicy
+          circuit-breaker: cb-orders-read
+          retry: retry-orders-read
+          bulkhead: bh-default
+
+        # Sin retry: las escrituras (POST) no son idempotentes
+        - name: ordersWritePolicy
+          circuit-breaker: cb-orders-write
+          bulkhead: bh-default
+
+        - name: pagosPolicy
+          circuit-breaker: cb-pagos
+          retry: retry-pagos
+          rate-limiter: rl-pagos
+          bulkhead: bh-pagos
+
+      # Evaluadas en orden: la primera que coincide gana (poner las mas especificas arriba)
+      routes:
+        - host: api.cliente.com
+          path: /v1/orders/**
+          method: GET
+          policy: ordersReadPolicy
+
+        - host: api.cliente.com
+          path: /v1/orders/**
+          policy: ordersWritePolicy
+
+        - host: pagos.externo.com
+          path: /**
+          policy: pagosPolicy
+
+resilience4j:
+  circuitbreaker:
+    instances:
+      cb-default:
+        sliding-window-type: COUNT_BASED
+        sliding-window-size: 50
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 15s
+      cb-orders-read:
+        sliding-window-size: 100
+        failure-rate-threshold: 30
+        wait-duration-in-open-state: 5s
+      cb-orders-write:
+        sliding-window-size: 30
+        failure-rate-threshold: 20
+        wait-duration-in-open-state: 20s
+      cb-pagos:
+        sliding-window-size: 20
+        failure-rate-threshold: 25
+        wait-duration-in-open-state: 30s
+
+  retry:
+    instances:
+      retry-default:
+        max-attempts: 2
+        wait-duration: 200ms
+      retry-orders-read:
+        max-attempts: 3
+        wait-duration: 150ms
+      retry-pagos:
+        max-attempts: 4
+        wait-duration: 500ms
+        enable-exponential-backoff: true
+        exponential-backoff-multiplier: 2
+
+  ratelimiter:
+    instances:
+      rl-default:
+        limit-for-period: 200
+        limit-refresh-period: 1s
+        timeout-duration: 50ms
+      rl-pagos:
+        limit-for-period: 20
+        limit-refresh-period: 1s
+        timeout-duration: 100ms
+
+  bulkhead:
+    instances:
+      bh-default:
+        max-concurrent-calls: 50
+        max-wait-duration: 20ms
+      bh-pagos:
+        max-concurrent-calls: 10
+        max-wait-duration: 100ms
+
+# Timeouts de conexion/lectura (TimeLimiter no aplica a llamadas sincronas)
+spring:
+  http:
+    client:
+      connect-timeout: 2s
+      read-timeout: 5s
